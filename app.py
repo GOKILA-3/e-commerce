@@ -5,7 +5,7 @@ from PIL import Image, ImageOps
 import pandas as pd
 
 # Load the trained model
-model = tf.keras.models.load_model("fashion_mnist_advanced_model.h5")
+model = tf.keras.models.load_model("model.ipynb")
 
 # Class labels
 class_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',

@@ -11,7 +11,7 @@ model = tf.keras.models.load_model("fashion_mnist_advanced_model.h5")
 class_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
                'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
 
-# ---------------- UI Design ----------------
+# UI Design
 st.set_page_config(page_title="Fashion Category Predictor", layout="wide")
 st.markdown(
     """
@@ -39,7 +39,6 @@ This AI-powered tool classifies fashion items into 10 categories from the Fashio
 - Use 28x28 grayscale images for best accuracy.
 - Clothing images will be resized automatically.
 - Works well for top-view product photos.
-
 """)
 
 st.markdown('<div class="title">🛍️ AI-Powered E-Commerce Personalization</div>', unsafe_allow_html=True)
@@ -47,11 +46,18 @@ st.markdown('<div class="sub">👗 Fashion Category Predictor</div>', unsafe_all
 
 uploaded_file = st.file_uploader("📷 Upload a clothing image (jpg/jpeg/png)", type=["jpg", "jpeg", "png"])
 
-# ------------- Prediction Logic ----------------
+# Prediction Logic
 if uploaded_file:
     with st.spinner("Processing Image..."):
         image = Image.open(uploaded_file).convert("L")
-        image_resized = ImageOps.fit(image, (28, 28), Image.ANTIALIAS)
+
+        # ✅ Fix compatibility for resizing
+        try:
+            resample = Image.Resampling.LANCZOS
+        except AttributeError:
+            resample = Image.ANTIALIAS
+
+        image_resized = ImageOps.fit(image, (28, 28), method=resample)
         img_array = np.array(image_resized).reshape(1, 28, 28, 1).astype(np.float32) / 255.0
 
         predictions = model.predict(img_array)
@@ -78,6 +84,5 @@ if uploaded_file:
             "Confidence": predictions[0]
         })
         st.bar_chart(conf_df.set_index("Category"))
-
 else:
     st.info("👆 Upload an image to begin fashion category prediction.")

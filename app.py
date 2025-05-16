@@ -2,57 +2,130 @@ import streamlit as st
 import numpy as np
 import tensorflow as tf
 from PIL import Image, ImageOps
+import pandas as pd
+import altair as alt
 
-# Load your trained model
-model = tf.keras.models.load_model('fashion_mnist_advanced_model.h5')
+# Load the trained model
+model = tf.keras.models.load_model("fashion_mnist_advanced_model.h5")
 
-class_names = [
-    "T-shirt/top", "Trouser", "Pullover", "Dress", "Coat", 
-    "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
-]
+# Class labels
+class_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
+               'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
 
-# Load overlay images with transparency (PNG) for specs, cap, tshirt
-overlay_specs = Image.open("overlays/specs.png").convert("RGBA")
-overlay_cap = Image.open("overlays/cap.png").convert("RGBA")
-overlay_tshirt = Image.open("overlays/tshirt.png").convert("RGBA")
+# --- UI Design ---
+st.set_page_config(page_title="Fashion Category Predictor", layout="wide", page_icon="🛍️")
 
-def preprocess_image(img):
-    img = img.convert('L').resize((28, 28))
-    img = np.array(img) / 255.0
-    img = img.reshape(1, 28, 28, 1)
-    return img
+# Custom CSS for styling
+st.markdown("""
+<style>
+    .title {
+        font-size: 56px;
+        font-weight: 800;
+        color: #FF4B4B;
+        text-align: center;
+        margin-bottom: 0;
+    }
+    .subtitle {
+        font-size: 24px;
+        color: #1E90FF;
+        text-align: center;
+        margin-top: 0;
+        margin-bottom: 30px;
+        font-weight: 600;
+    }
+    .confidence-bar {
+        background: linear-gradient(90deg, #FF4B4B, #FFAA00);
+        height: 24px;
+        border-radius: 12px;
+    }
+    .confidence-label {
+        font-weight: 700;
+        color: #444444;
+        margin-top: 5px;
+        margin-bottom: 5px;
+    }
+    .stProgress > div > div > div > div {
+        background-color: #FF4B4B;
+    }
+    footer {
+        visibility: hidden;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-def overlay_image(base_img, overlay_img, position=(0,0), scale=1.0):
-    # Resize overlay according to scale
-    w, h = overlay_img.size
-    overlay_img = overlay_img.resize((int(w*scale), int(h*scale)), Image.ANTIALIAS)
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/892/892458.png", width=100)
+st.sidebar.title("🛒 App Info")
+st.sidebar.markdown("""
+This AI-powered tool classifies fashion items into 10 categories from the Fashion MNIST dataset using a deep learning model.
 
-    base_img = base_img.convert("RGBA")
-    base_img.paste(overlay_img, position, overlay_img)
-    return base_img
+### 💡 Tips:
+- Use clear product images.
+- Images will be resized to 28x28 pixels.
+- Works best for front-view clothing photos.
+""")
 
-st.title("Virtual Try-On Snapshot App")
+st.markdown('<h1 class="title">🛍️ AI-Powered E-Commerce Personalization</h1>', unsafe_allow_html=True)
+st.markdown('<h2 class="subtitle">👗 Fashion Category Predictor</h2>', unsafe_allow_html=True)
 
-img_file_buffer = st.camera_input("Take a picture")
+uploaded_file = st.file_uploader("📷 Upload a clothing image (jpg/jpeg/png)", type=["jpg", "jpeg", "png"])
 
-if img_file_buffer is not None:
-    img = Image.open(img_file_buffer)
-    st.image(img, caption="Input Image", use_column_width=True)
+def display_confidence_bar(confidence, label):
+    st.markdown(f'<div class="confidence-label">{label}</div>', unsafe_allow_html=True)
+    st.progress(confidence)
 
-    processed_img = preprocess_image(img)
-    prediction = model.predict(processed_img)
-    pred_label = np.argmax(prediction)
-    st.write(f"**Predicted Class:** {class_names[pred_label]}")
+if uploaded_file:
+    with st.spinner("🔍 Analyzing your image..."):
+        image = Image.open(uploaded_file).convert("L")
 
-    # Overlay logic depending on predicted class
-    # For simplicity, overlay cap if predicted is "T-shirt/top" or "Pullover"
-    # overlay specs if "Shirt", overlay tshirt if "T-shirt/top"
-    img_overlay = img.copy()
+        try:
+            resample = Image.Resampling.LANCZOS
+        except AttributeError:
+            resample = Image.ANTIALIAS
 
-    if class_names[pred_label] in ["T-shirt/top", "Pullover"]:
-        img_overlay = overlay_image(img_overlay, overlay_cap, position=(50, 10), scale=0.3)
-        img_overlay = overlay_image(img_overlay, overlay_tshirt, position=(20, 150), scale=0.5)
-    elif class_names[pred_label] == "Shirt":
-        img_overlay = overlay_image(img_overlay, overlay_specs, position=(100, 80), scale=0.3)
+        image_resized = ImageOps.fit(image, (28, 28), method=resample)
+        img_array = np.array(image_resized).reshape(1, 28, 28, 1).astype(np.float32) / 255.0
 
-    st.image(img_overlay, caption="Virtual Try-On Result", use_column_width=True)
+        predictions = model.predict(img_array)
+        predicted_index = np.argmax(predictions)
+        predicted_class = class_names[predicted_index]
+        confidence = predictions[0][predicted_index]
+
+    # Show input image and prediction side by side
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.image(image_resized, caption="🖼️ Processed Image (28x28)", width=180, use_column_width=False)
+
+    with col2:
+        st.success(f"✅ Predicted Category: **{predicted_class}**")
+        st.markdown(f"### Confidence: <span style='color:#FF4B4B'>{confidence:.2%}</span>", unsafe_allow_html=True)
+        if confidence < 0.7:
+            st.warning("⚠️ Confidence is low. Try a clearer or closer image.")
+        elif confidence > 0.9:
+            st.balloons()
+
+        # Animated confidence bar
+        display_confidence_bar(confidence, f"Confidence in {predicted_class}")
+
+    # Show confidence scores for all classes using Altair chart
+    st.markdown("### 📊 Confidence Scores for All Categories")
+
+    conf_df = pd.DataFrame({
+        "Category": class_names,
+        "Confidence": predictions[0]
+    })
+
+    chart = alt.Chart(conf_df).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+        x=alt.X('Confidence:Q', axis=alt.Axis(format='.0%')),
+        y=alt.Y('Category:N', sort='-x'),
+        color=alt.Color('Confidence:Q', scale=alt.Scale(scheme='redyellowgreen'), legend=None),
+        tooltip=[alt.Tooltip('Category:N'), alt.Tooltip('Confidence:Q', format='.1%')]
+    ).properties(height=300, width=700)
+
+    st.altair_chart(chart, use_container_width=True)
+
+    # Option to show raw prediction scores
+    with st.expander("🔍 Show raw prediction scores"):
+        st.write(predictions)
+
+else:
+    st.info("👆 Upload an image to begin fashion category prediction.")

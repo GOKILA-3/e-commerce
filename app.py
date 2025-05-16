@@ -1,119 +1,91 @@
-import streamlit as st
+import cv2
 import numpy as np
 import tensorflow as tf
-from PIL import Image, ImageOps
-import pandas as pd
-import os
+import mediapipe as mp
 
-# Load trained model
+# Load the trained model
 model = tf.keras.models.load_model("fashion_mnist_advanced_model.h5")
 
-# Class labels
-class_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
-               'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
+# Labels for Fashion MNIST
+labels = [
+    "T-shirt/top", "Trouser", "Pullover", "Dress", "Coat",
+    "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
+]
 
-# UI setup
-st.set_page_config(page_title="Fashion Predictor with Try-On", layout="wide")
-st.markdown(
-    """
-    <style>
-    .title { font-size:48px; color:#FF4B4B; font-weight:bold; }
-    .sub { font-size:24px; color:#1E90FF; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# Load overlay images
+specs_img = cv2.imread("specs.png", cv2.IMREAD_UNCHANGED)
+cap_img = cv2.imread("cap.png", cv2.IMREAD_UNCHANGED)
 
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/892/892458.png", width=100)
-st.sidebar.title("🛒 App Info")
-st.sidebar.write("""
-This AI tool classifies clothing items and overlays try-on items like:
-- Fashionwear (T-shirt, dress, coat, etc.)
-- 👓 Specs
-- 🧢 Caps
+# Initialize MediaPipe Face Detection
+mp_face = mp.solutions.face_detection
+face_detection = mp_face.FaceDetection(model_selection=0, min_detection_confidence=0.5)
 
-Add transparent PNGs into `tryon_assets/`.
-""")
+def overlay_transparent(background, overlay, x, y, scale=1.0):
+    overlay = cv2.resize(overlay, (0, 0), fx=scale, fy=scale)
+    h, w, _ = overlay.shape
 
-st.markdown('<div class="title">🛍️ AI E-Commerce Smart Try-On</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub">👗 Fashion Prediction + Virtual Try-On (Clothes + Specs + Cap)</div>', unsafe_allow_html=True)
+    if x + w > background.shape[1] or y + h > background.shape[0]:
+        return background
 
-uploaded_file = st.file_uploader("📷 Upload a clothing image (jpg/jpeg/png)", type=["jpg", "jpeg", "png"])
+    alpha_overlay = overlay[:, :, 3] / 255.0
+    alpha_background = 1.0 - alpha_overlay
 
-# Add checkboxes for specs and cap
-add_specs = st.checkbox("👓 Add Specs")
-add_cap = st.checkbox("🧢 Add Cap")
+    for c in range(3):
+        background[y:y+h, x:x+w, c] = (
+            alpha_overlay * overlay[:, :, c] +
+            alpha_background * background[y:y+h, x:x+w, c]
+        )
+    return background
 
-if uploaded_file:
-    with st.spinner("Processing Image..."):
-        image = Image.open(uploaded_file).convert("L")
+# Start webcam
+cap = cv2.VideoCapture(0)
 
-        # Resize image with compatible method
-        try:
-            resample = Image.Resampling.LANCZOS
-        except AttributeError:
-            resample = Image.ANTIALIAS
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-        image_resized = ImageOps.fit(image, (28, 28), method=resample)
-        img_array = np.array(image_resized).reshape(1, 28, 28, 1).astype(np.float32) / 255.0
+    # Flip and convert to RGB for MediaPipe
+    frame = cv2.flip(frame, 1)
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = face_detection.process(rgb_frame)
 
-        predictions = model.predict(img_array)
-        predicted_index = np.argmax(predictions)
-        predicted_class = class_names[predicted_index]
-        confidence = predictions[0][predicted_index]
+    # Face overlays (specs & cap)
+    if results.detections:
+        for detection in results.detections:
+            bbox = detection.location_data.relative_bounding_box
+            h, w, _ = frame.shape
+            x = int(bbox.xmin * w)
+            y = int(bbox.ymin * h)
+            box_w = int(bbox.width * w)
+            box_h = int(bbox.height * h)
 
-        # Show prediction
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.image(image_resized, caption="🖼️ Processed Image", width=150)
-        with col2:
-            st.success(f"✅ Predicted Category: **{predicted_class}**")
-            st.write(f"🎯 Confidence: **{confidence:.2%}**")
-            if confidence < 0.7:
-                st.warning("⚠️ Low confidence. Use a better image.")
-            elif confidence > 0.9:
-                st.balloons()
+            # Overlay specs
+            specs_scale = box_w / specs_img.shape[1] * 0.8
+            frame = overlay_transparent(frame, specs_img, x, y + int(box_h * 0.4), scale=specs_scale)
 
-        # Confidence chart
-        st.markdown("### 📊 Confidence Scores for All Categories")
-        conf_df = pd.DataFrame({
-            "Category": class_names,
-            "Confidence": predictions[0]
-        })
-        st.bar_chart(conf_df.set_index("Category"))
+            # Overlay cap
+            cap_scale = box_w / cap_img.shape[1] * 1.1
+            frame = overlay_transparent(frame, cap_img, x - 10, y - int(box_h * 0.8), scale=cap_scale)
 
-        # Try-on section
-        st.markdown("### 🧍 Virtual Try-On Preview")
+    # Model Prediction (optional snapshot)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    resized = cv2.resize(gray, (28, 28))
+    normalized = resized.astype("float32") / 255.0
+    input_img = np.expand_dims(normalized, axis=(0, -1))  # shape: (1, 28, 28, 1)
 
-        # Compose try-on items
-        tryon_items = []
+    pred = model.predict(input_img, verbose=0)
+    class_id = np.argmax(pred)
+    pred_label = labels[class_id]
 
-        # Main fashion item
-        fashion_filename = predicted_class.lower().replace(" ", "").replace("-", "") + ".png"
-        fashion_path = os.path.join("tryon_assets", fashion_filename)
-        if os.path.exists(fashion_path):
-            tryon_items.append(("🧥 Clothing", fashion_path))
-        else:
-            st.warning(f"🔍 No try-on overlay for: {predicted_class}")
+    # Show prediction
+    cv2.putText(frame, f"Prediction: {pred_label}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-        # Optional accessories
-        if add_specs:
-            specs_path = os.path.join("tryon_assets", "specs.png")
-            if os.path.exists(specs_path):
-                tryon_items.append(("👓 Specs", specs_path))
-            else:
-                st.warning("❌ Specs image not found.")
+    cv2.imshow("AI Virtual Try-On", frame)
 
-        if add_cap:
-            cap_path = os.path.join("tryon_assets", "cap.png")
-            if os.path.exists(cap_path):
-                tryon_items.append(("🧢 Cap", cap_path))
-            else:
-                st.warning("❌ Cap image not found.")
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
 
-        # Display overlays
-        for label, path in tryon_items:
-            image_overlay = Image.open(path).resize((150, 150))
-            st.image(image_overlay, caption=label, width=150)
-else:
-    st.info("👆 Upload an image to begin fashion category prediction.")
+cap.release()
+cv2.destroyAllWindows()

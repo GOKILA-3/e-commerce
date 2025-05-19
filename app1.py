@@ -5,7 +5,7 @@ import joblib  # or your model library
 # Load your model once when app starts
 @st.cache(allow_output_mutation=True)
 def load_model():
-    return joblib.load('your_model.pkl')
+    return joblib.load('fashion_mnist_advanced_model.h5')
 
 model = load_model()
 
